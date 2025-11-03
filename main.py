@@ -45,16 +45,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     platform TEXT,
     name TEXT NOT NULL,
     points INTEGER NOT NULL,
-    verification TEXT DEFAULT 'manual'
+    verification TEXT DEFAULT 'manual',
+    url TEXT DEFAULT NULL
 )
 """)
-
-# ✅ Add URL column if not exists
-try:
-    cur.execute("ALTER TABLE tasks ADD COLUMN url TEXT DEFAULT NULL")
-    conn.commit()
-except sqlite3.OperationalError:
-    pass
 
 # Create user_progress table
 cur.execute("""
@@ -164,14 +158,10 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton(f"✅ Complete #{task_id}", callback_data=f"complete_{task_id}"),
             InlineKeyboardButton(f"📸 Submit Proof", callback_data=f"proof_{task_id}")
         ]]
-        # Add URL button if task has one
         if url:
             buttons.append([InlineKeyboardButton("🔗 Open Task", url=url)])
-
         if update.effective_user.id in ADMIN_IDS:
-            buttons.append([
-                InlineKeyboardButton(f"🗑️ Remove #{task_id}", callback_data=f"remove_{task_id}")
-            ])
+            buttons.append([InlineKeyboardButton(f"🗑️ Remove #{task_id}", callback_data=f"remove_{task_id}")])
 
         markup = InlineKeyboardMarkup(buttons)
 
@@ -185,15 +175,13 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# === PROOF SUBMISSION ===
+# === PROOF HANDLING ===
 proof_waiting = {}
 
 async def ask_proof(update: Update, context: ContextTypes.DEFAULT_TYPE, task_id: int):
     user_id = update.effective_user.id
     proof_waiting[user_id] = task_id
-    await update.callback_query.message.reply_text(
-        f"📸 Please send your proof image for Task #{task_id}."
-    )
+    await update.callback_query.message.reply_text(f"📸 Please send your proof image for Task #{task_id}.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -228,12 +216,10 @@ async def review_proofs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for user_id, username, task_id, proof_id in rows:
         name_display = f"@{username}" if username else str(user_id)
-        buttons = [
-            [
-                InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}_{task_id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}_{task_id}")
-            ]
-        ]
+        buttons = [[
+            InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}_{task_id}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}_{task_id}")
+        ]]
         markup = InlineKeyboardMarkup(buttons)
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
@@ -278,9 +264,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 WHERE user_id = ? AND task_id = ?
             """, (points[0], user_id, task_id))
             conn.commit()
-            await query.edit_message_caption(
-                caption=f"✅ Approved! Awarded {points[0]} pts to user {user_id}."
-            )
+            await query.edit_message_caption(caption=f"✅ Approved! Awarded {points[0]} pts to user {user_id}.")
 
     elif data.startswith("reject_"):
         _, user_id, task_id = data.split("_")
@@ -346,6 +330,7 @@ async def main():
     logger.info("🚀 Starting GrowTogether bot")
     keep_alive()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add_task", add_task))
     app.add_handler(CommandHandler("remove_task", remove_task))
@@ -355,7 +340,9 @@ async def main():
     app.add_handler(CommandHandler("review_proofs", review_proofs))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    await app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    # FIX: Don't await this, run it normally
+    app.run_polling()
 
 
 if __name__ == "__main__":
