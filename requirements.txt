@@ -1,6 +1,3 @@
-python-telegram-bot==20.7
-Flask==2.2.5
-nest_asyncio==1.5.7
-requests
-apscheduler
-python-dotenv
+python-telegram-bot==20.5
+Flask
+nest-asyncio
