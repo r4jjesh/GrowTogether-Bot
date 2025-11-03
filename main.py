@@ -2,13 +2,8 @@ import os
 import asyncio
 import logging
 import sqlite3
-from datetime import datetime, timedelta
 from html import escape
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -30,14 +25,13 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = {5002083764, 1835452655, 5838038047, 2112909022}
 
 if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN not found!")
+    raise ValueError("❌ BOT_TOKEN not found! Please set it in environment variables.")
 
 # === DATABASE SETUP ===
 DB_PATH = "tasks.db"
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cur = conn.cursor()
 
-# Create tasks table
 cur.execute("""
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +44,6 @@ CREATE TABLE IF NOT EXISTS tasks (
 )
 """)
 
-# Create user_progress table
 cur.execute("""
 CREATE TABLE IF NOT EXISTS user_progress (
     user_id INTEGER,
@@ -306,6 +299,7 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = cur.fetchone()[0] or 0
     await update.message.reply_text(f"🏅 Your total points: {total}")
 
+
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.execute("""
     SELECT username, SUM(points) as total_points
@@ -328,9 +322,14 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === MAIN ===
 async def main():
     logger.info("🚀 Starting GrowTogether bot")
+
+    # Start Flask keep_alive server (for Render)
     keep_alive()
+
+    # Initialize bot
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add_task", add_task))
     app.add_handler(CommandHandler("remove_task", remove_task))
@@ -341,8 +340,11 @@ async def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    # FIX: Don't await this, run it normally
-    app.run_polling()
+    logger.info("✅ Bot is polling...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
