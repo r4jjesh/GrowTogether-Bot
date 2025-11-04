@@ -1,4 +1,1 @@
-python-telegram-bot==20.5
-Flask
-nest-asyncio
-requests
+python-telegram-bot==13.15
