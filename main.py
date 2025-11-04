@@ -1,5 +1,5 @@
 # -------------------------------------------------
-# IMPORTS (FIX urllib3.contrib + imghdr + all others)
+# IMPORTS (FULL FIX: urllib3 + imghdr)
 # -------------------------------------------------
 import os
 import logging
@@ -9,7 +9,7 @@ import threading
 from queue import Queue
 from html import escape
 
-# === FIX: urllib3.contrib.appengine missing on Render ===
+# === FULL FIX: urllib3.contrib.appengine (mock missing attrs) ===
 try:
     import urllib3.contrib.appengine
 except ImportError:
@@ -17,6 +17,8 @@ except ImportError:
     import sys
     appengine = types.ModuleType("urllib3.contrib.appengine")
     appengine.AppEngineManager = None
+    appengine.is_appengine_sandbox = lambda: False  # ← THIS WAS MISSING
+    appengine.is_local_dev = lambda: False
     sys.modules["urllib3.contrib.appengine"] = appengine
 # ======================================
 
@@ -90,7 +92,7 @@ CREATE TABLE IF NOT EXISTS user_progress (
 conn.commit()
 
 # -------------------------------------------------
-# HANDLERS (v13 style – sync, CallbackContext)
+# HANDLERS (unchanged)
 # -------------------------------------------------
 def start(update: Update, context: CallbackContext):
     text = (
@@ -103,7 +105,6 @@ def start(update: Update, context: CallbackContext):
         "/complete_task [task_id] — Mark a task as complete"
     )
     update.message.reply_text(text, parse_mode="HTML")
-
 
 def add_task(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
@@ -125,7 +126,6 @@ def add_task(update: Update, context: CallbackContext):
     conn.commit()
     update.message.reply_text(f"Task #{cur.lastrowid} added!")
 
-
 def remove_task(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
         update.message.reply_text("Only admins can remove tasks.")
@@ -137,7 +137,6 @@ def remove_task(update: Update, context: CallbackContext):
     cur.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     conn.commit()
     update.message.reply_text(f"Task #{task_id} removed.")
-
 
 def list_tasks(update: Update, context: CallbackContext):
     niche = context.args[0] if context.args else "crypto"
@@ -163,14 +162,11 @@ def list_tasks(update: Update, context: CallbackContext):
             parse_mode="HTML",
         )
 
-
 proof_waiting = {}
-
 
 def ask_proof(update: Update, context: CallbackContext, task_id: int):
     proof_waiting[update.effective_user.id] = task_id
     update.callback_query.message.reply_text(f"Send proof for Task #{task_id}")
-
 
 def handle_photo(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -184,7 +180,6 @@ def handle_photo(update: Update, context: CallbackContext):
     )
     conn.commit()
     update.message.reply_text("Proof submitted!")
-
 
 def review_proofs(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
@@ -210,7 +205,6 @@ def review_proofs(update: Update, context: CallbackContext):
                 ]
             ),
         )
-
 
 def button_handler(update: Update, context: CallbackContext):
     q = update.callback_query
@@ -245,7 +239,6 @@ def button_handler(update: Update, context: CallbackContext):
         conn.commit()
         q.edit_message_caption("Rejected.")
 
-
 def process_completion(update, context, task_id, from_button=False):
     user = update.effective_user
     cur.execute(
@@ -267,7 +260,6 @@ def process_completion(update, context, task_id, from_button=False):
     else:
         update.message.reply_text(msg)
 
-
 def my_stats(update: Update, context: CallbackContext):
     cur.execute(
         "SELECT SUM(points) FROM user_progress WHERE user_id = ? AND completed = 1",
@@ -275,7 +267,6 @@ def my_stats(update: Update, context: CallbackContext):
     )
     pts = cur.fetchone()[0] or 0
     update.message.reply_text(f"Your points: {pts}")
-
 
 def leaderboard(update: Update, context: CallbackContext):
     cur.execute(
@@ -290,13 +281,11 @@ def leaderboard(update: Update, context: CallbackContext):
     )
     update.message.reply_text(text, parse_mode="HTML")
 
-
 def complete_task(update: Update, context: CallbackContext):
     if not context.args:
         update.message.reply_text("Usage: /complete_task [task_id]")
         return
     process_completion(update, context, int(context.args[0]), False)
-
 
 # -------------------------------------------------
 # FLASK WEBHOOK
@@ -316,7 +305,6 @@ def webhook():
     updater.dispatcher.process_update(update)
     return "", 200
 
-
 # -------------------------------------------------
 # MAIN
 # -------------------------------------------------
@@ -326,7 +314,6 @@ def main():
 
     dp = updater.dispatcher
 
-    # Register handlers
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("add_task", add_task))
     dp.add_handler(CommandHandler("remove_task", remove_task))
@@ -338,10 +325,8 @@ def main():
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.photo, handle_photo))
 
-    # Keep-alive
     keep_alive()
 
-    # Webhook
     webhook_url = os.getenv("RENDER_EXTERNAL_URL")
     port = int(os.getenv("PORT", 10000))
 
@@ -360,14 +345,12 @@ def main():
 
     logger.info("Bot is LIVE!")
 
-    # Flask thread
     def run_flask():
         flask_app.run(host="0.0.0.0", port=port)
 
     threading.Thread(target=run_flask, daemon=True).start()
 
     updater.idle()
-
 
 # -------------------------------------------------
 # ENTRYPOINT
