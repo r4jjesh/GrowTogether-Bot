@@ -1,5 +1,5 @@
 # -------------------------------------------------
-# IMPORTS (FIX urllib3 + imghdr + all others)
+# IMPORTS (FIX urllib3.contrib + imghdr + all others)
 # -------------------------------------------------
 import os
 import logging
@@ -9,14 +9,15 @@ import threading
 from queue import Queue
 from html import escape
 
-# === FIX: urllib3 missing on Render ===
+# === FIX: urllib3.contrib.appengine missing on Render ===
 try:
-    import urllib3
+    import urllib3.contrib.appengine
 except ImportError:
-    import subprocess
+    import types
     import sys
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "urllib3"])
-    import urllib3
+    appengine = types.ModuleType("urllib3.contrib.appengine")
+    appengine.AppEngineManager = None
+    sys.modules["urllib3.contrib.appengine"] = appengine
 # ======================================
 
 # === FIX: imghdr missing on Render ===
@@ -298,7 +299,7 @@ def complete_task(update: Update, context: CallbackContext):
 
 
 # -------------------------------------------------
-# FLASK WEBHOOK (Render needs a route)
+# FLASK WEBHOOK
 # -------------------------------------------------
 flask_app = Flask(__name__)
 
@@ -317,7 +318,7 @@ def webhook():
 
 
 # -------------------------------------------------
-# MAIN – start keep-alive + webhook
+# MAIN
 # -------------------------------------------------
 def main():
     global updater
@@ -337,10 +338,10 @@ def main():
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.photo, handle_photo))
 
-    # Keep-alive (prevents Render free-tier sleep)
+    # Keep-alive
     keep_alive()
 
-    # Webhook URL from Render
+    # Webhook
     webhook_url = os.getenv("RENDER_EXTERNAL_URL")
     port = int(os.getenv("PORT", 10000))
 
@@ -354,19 +355,17 @@ def main():
         )
         logger.info(f"Webhook set to {webhook_url}")
     else:
-        logger.warning("RENDER_EXTERNAL_URL not set – falling back to polling")
+        logger.warning("RENDER_EXTERNAL_URL not set – using polling")
         updater.start_polling()
 
     logger.info("Bot is LIVE!")
 
-    # Run Flask in a background thread (Render expects a web server)
+    # Flask thread
     def run_flask():
         flask_app.run(host="0.0.0.0", port=port)
 
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
+    threading.Thread(target=run_flask, daemon=True).start()
 
-    # Keep the main thread alive
     updater.idle()
 
 
