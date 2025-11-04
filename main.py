@@ -1,12 +1,10 @@
 # -------------------------------------------------
-# IMPORTS (FULLY FIXED + ALL DEPENDENCIES)
+# IMPORTS (ALL FIXES: urllib3, imghdr, etc.)
 # -------------------------------------------------
 import os
 import logging
 import sqlite3
-import asyncio
 import threading
-from queue import Queue
 from html import escape
 
 # === FIX: urllib3.contrib.appengine ===
@@ -90,17 +88,22 @@ CREATE TABLE IF NOT EXISTS user_progress (
 conn.commit()
 
 # -------------------------------------------------
-# HANDLERS (ALL YOUR ORIGINAL + BEAUTIFUL UI)
+# GLOBAL
+# -------------------------------------------------
+proof_waiting = {}
+
+# -------------------------------------------------
+# HANDLERS (ALL OPERATIONS + CLEAN UI)
 # -------------------------------------------------
 def start(update: Update, context: CallbackContext):
     text = (
         "Welcome to <b>Crypto Growth Bot</b>!\n\n"
         "Complete tasks, earn points, and climb the leaderboard!\n\n"
         "<b>Commands:</b>\n"
-        "📋 /list_tasks — View all tasks\n"
-        "🏆 /leaderboard — See top earners\n"
-        "💰 /my_stats — Check your points\n"
-        "✅ /complete_task [id] — Submit a task\n\n"
+        "/list_tasks — View all tasks\n"
+        "/leaderboard — See top earners\n"
+        "/my_stats — Check your points\n"
+        "/complete_task [id] — Submit a task\n\n"
         "Let’s grow together!"
     )
     update.message.reply_text(text, parse_mode="HTML")
@@ -114,7 +117,7 @@ def add_task(update: Update, context: CallbackContext):
         update.message.reply_text(
             "<code>/add_task [niche] [platform] [name] [url] [points]</code>\n"
             "Example:\n"
-            "<code>/add_task crypto twitter Follow @elonmusk https://x.com/elonmusk 50</code>",
+            "<code>/add_task crypto x RT-Like https://x.com/post/123 100</code>",
             parse_mode="HTML"
         )
         return
@@ -149,19 +152,19 @@ def list_tasks(update: Update, context: CallbackContext):
     )
     rows = cur.fetchall()
     if not rows:
-        update.message.reply_text(f"No tasks in <b>{niche}</b> niche yet.", parse_mode="HTML")
+        update.message.reply_text(f"No tasks in <b>{niche}</b> niche.", parse_mode="HTML")
         return
 
     for tid, plat, name, pts, url in rows:
-        platform_emoji = {
+        platform_icon = {
             "twitter": "Twitter", "x": "X", "instagram": "Instagram", "youtube": "YouTube",
             "tiktok": "TikTok", "discord": "Discord", "telegram": "Telegram", "website": "Website"
         }.get(plat.lower(), "Link")
 
         task_text = (
-            f"<b>Task #{tid}</b> {platform_emoji}\n"
-            f"<i>{plat.title()}</i>: {escape(name)}\n"
-            f"Reward: <b>{pts} pts</b>\n"
+            f"<b>Task #{tid}</b>\n"
+            f"{platform_icon}: <i>{escape(name)}</i>\n"
+            f"Reward: <b>{pts} pts</b>"
         )
 
         btns = [
@@ -169,9 +172,9 @@ def list_tasks(update: Update, context: CallbackContext):
             [InlineKeyboardButton("Submit Proof", callback_data=f"proof_{tid}")]
         ]
         if url:
-            btns.append([InlineKeyboardButton("Open Link", url=url)])
+            btns.append([InlineKeyboardButton("Open Task", url=url)])
         if update.effective_user.id in ADMIN_IDS:
-            btns.append([InlineKeyboardButton("Remove", callback_data=f"remove_{tid}")])
+            btns.append([InlineKeyboardButton(f"Remove #{tid}", callback_data=f"remove_{tid}")])
 
         update.message.reply_text(
             task_text,
@@ -181,14 +184,11 @@ def list_tasks(update: Update, context: CallbackContext):
         )
 
 
-proof_waiting = {}
-
-
 def ask_proof(update: Update, context: CallbackContext, task_id: int):
     proof_waiting[update.effective_user.id] = task_id
-    update.callback_query.message.reply_text(
+    update.callback_query.edit_message_text(
         f"Send a <b>screenshot</b> as proof for Task #{task_id}\n\n"
-        "<i>Tip: Take a clear photo of your action!</i>",
+        "<i>Tip: Show your action clearly!</i>",
         parse_mode="HTML"
     )
 
@@ -225,16 +225,14 @@ def review_proofs(update: Update, context: CallbackContext):
         context.bot.send_photo(
             update.effective_chat.id,
             fid,
-            caption=f"<b>Proof for Task #{tid}</b>\nFrom: <code>User {uid}</code>",
+            caption=f"<b>Proof for Task #{tid}</b>\nUser: <code>{uid}</code>",
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
+            reply_markup=InlineKeyboardMarkup([
                 [
-                    [
-                        InlineKeyboardButton("Approve", callback_data=f"approve_{uid}_{tid}"),
-                        InlineKeyboardButton("Reject", callback_data=f"reject_{uid}_{tid}"),
-                    ]
+                    InlineKeyboardButton("Approve", callback_data=f"approve_{uid}_{tid}"),
+                    InlineKeyboardButton("Reject", callback_data=f"reject_{uid}_{tid}")
                 ]
-            ),
+            ])
         )
 
 
@@ -242,15 +240,21 @@ def button_handler(update: Update, context: CallbackContext):
     q = update.callback_query
     q.answer()
     data = q.data
+
     if data.startswith("complete_"):
-        process_completion(update, context, int(data.split("_")[1]), True)
+        tid = int(data.split("_")[1])
+        process_completion(update, context, tid, True)
+
     elif data.startswith("proof_"):
-        ask_proof(update, context, int(data.split("_")[1]))
+        tid = int(data.split("_")[1])
+        ask_proof(update, context, tid)
+
     elif data.startswith("remove_") and update.effective_user.id in ADMIN_IDS:
         tid = int(data.split("_")[1])
         cur.execute("DELETE FROM tasks WHERE id = ?", (tid,))
         conn.commit()
         q.edit_message_text(f"Task #{tid} removed.")
+
     elif data.startswith("approve_"):
         _, uid, tid = data.split("_")
         uid, tid = int(uid), int(tid)
@@ -258,24 +262,33 @@ def button_handler(update: Update, context: CallbackContext):
         pts = cur.fetchone()[0]
         cur.execute(
             "UPDATE user_progress SET completed = 1, points = ? WHERE user_id = ? AND task_id = ?",
-            (pts, uid, tid),
+            (pts, uid, tid)
         )
         conn.commit()
-        q.edit_message_caption(caption=f"<b>Approved!</b> +{pts} pts", parse_mode="HTML")
+        q.edit_message_caption(caption=f"<b>APPROVED</b> +{pts} pts", parse_mode="HTML")
         try:
-            context.bot.send_message(uid, f"Your proof for Task #{tid} was <b>APPROVED</b>!\nYou earned <b>{pts} points</b>!", parse_mode="HTML")
+            context.bot.send_message(
+                uid,
+                f"Your proof for Task #{tid} was <b>APPROVED</b>!\n"
+                f"You earned <b>{pts} points</b>!",
+                parse_mode="HTML"
+            )
         except:
             pass
+
     elif data.startswith("reject_"):
         _, uid, tid = data.split("_")
-        cur.execute(
-            "DELETE FROM user_progress WHERE user_id = ? AND task_id = ?",
-            (int(uid), int(tid)),
-        )
+        uid, tid = int(uid), int(tid)
+        cur.execute("DELETE FROM user_progress WHERE user_id = ? AND task_id = ?", (uid, tid))
         conn.commit()
         q.edit_message_caption("Rejected.")
         try:
-            context.bot.send_message(uid, f"Your proof for Task #{tid} was <b>rejected</b>.\nTry again with better proof!", parse_mode="HTML")
+            context.bot.send_message(
+                uid,
+                f"Your proof for Task #{tid} was <b>rejected</b>.\n"
+                "Try again with a clearer screenshot!",
+                parse_mode="HTML"
+            )
         except:
             pass
 
