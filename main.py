@@ -1,5 +1,5 @@
 # -------------------------------------------------
-# IMPORTS (FIX imghdr + all others)
+# IMPORTS (FIX urllib3 + imghdr + all others)
 # -------------------------------------------------
 import os
 import logging
@@ -9,11 +9,20 @@ import threading
 from queue import Queue
 from html import escape
 
+# === FIX: urllib3 missing on Render ===
+try:
+    import urllib3
+except ImportError:
+    import subprocess
+    import sys
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "urllib3"])
+    import urllib3
+# ======================================
+
 # === FIX: imghdr missing on Render ===
 try:
     import imghdr
 except ImportError:
-    # Create a fake imghdr module
     import types
     imghdr = types.ModuleType("imghdr")
     imghdr.what = lambda *args, **kwargs: None
