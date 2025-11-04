@@ -97,21 +97,21 @@ proof_waiting = {}
 # -------------------------------------------------
 def start(update: Update, context: CallbackContext):
     text = (
-        "Welcome to <b>Crypto Growth Bot</b>!\n\n"
-        "Complete tasks, earn points, and climb the leaderboard!\n\n"
+        "👋 Welcome to <b>💼 Crypto Growth Bot</b>! 🚀\n\n"
+        "🎯 Complete tasks, earn rewards, and rise up the leaderboard! 📈\n\n"
         "<b>Commands:</b>\n"
         "/list_tasks — View all tasks\n"
         "/leaderboard — See top earners\n"
         "/my_stats — Check your points\n"
         "/complete_task [id] — Submit a task\n\n"
-        "Let’s grow together!"
+        "🤝 Let’s grow and succeed together! 💫"
     )
     update.message.reply_text(text, parse_mode="HTML")
 
 
 def add_task(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
-        update.message.reply_text("Only admins can add tasks.")
+        update.message.reply_text("⚠️ Only authorized admins can add new tasks.")
         return
     if len(context.args) < 5:
         update.message.reply_text(
@@ -129,20 +129,20 @@ def add_task(update: Update, context: CallbackContext):
         (niche, platform, name, points, url)
     )
     conn.commit()
-    update.message.reply_text(f"Task #{cur.lastrowid} added!")
+    update.message.reply_text(f"📝 Task #{cur.lastrowid} added successfully ✅")
 
 
 def remove_task(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
-        update.message.reply_text("Only admins can remove tasks.")
+        update.message.reply_text("⚠️ Only authorized admins can remove tasks.")
         return
     if not context.args:
-        update.message.reply_text("Usage: /remove_task [task_id]")
+        update.message.reply_text("📘 Usage: <code>/remove_task [task_id]</code>")
         return
     task_id = int(context.args[0])
     cur.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     conn.commit()
-    update.message.reply_text(f"Task #{task_id} removed.")
+    update.message.reply_text(f"📝 Task #{task_id} has been removed 🗑️")
 
 
 def list_tasks(update: Update, context: CallbackContext):
@@ -152,7 +152,7 @@ def list_tasks(update: Update, context: CallbackContext):
     )
     rows = cur.fetchall()
     if not rows:
-        update.message.reply_text(f"No tasks in <b>{niche}</b> niche.", parse_mode="HTML")
+        update.message.reply_text(f"📂 No available tasks in <b>{niche}</b> niche.", parse_mode="HTML")
         return
 
     for tid, plat, name, pts, url in rows:
@@ -162,7 +162,7 @@ def list_tasks(update: Update, context: CallbackContext):
         }.get(plat.lower(), "Link")
 
         task_text = (
-            f"<b>Task #{tid}</b>\n"
+            f"<b>📝 Task #{tid}</b>\n"
             f"{platform_icon}: <i>{escape(name)}</i>\n"
             f"Reward: <b>{pts} pts</b>"
         )
@@ -187,7 +187,7 @@ def list_tasks(update: Update, context: CallbackContext):
 def ask_proof(update: Update, context: CallbackContext, task_id: int):
     proof_waiting[update.effective_user.id] = task_id
     update.callback_query.edit_message_text(
-        f"Send a <b>screenshot</b> as proof for Task #{task_id}\n\n"
+        f"📸 Please send a <b>clear screenshot</b> as proof for 📝 Task #{task_id}\n\n"
         "<i>Tip: Show your action clearly!</i>",
         parse_mode="HTML"
     )
@@ -205,9 +205,9 @@ def handle_photo(update: Update, context: CallbackContext):
     )
     conn.commit()
     update.message.reply_text(
-        "Proof submitted!\n"
-        "Admins will review it soon.\n"
-        "You’ll get points once approved!"
+        "✅ Proof submitted successfully!\n"
+        "🕵️‍♂️ Our admins will review your submission shortly.\n"
+        "🏅 You’ll receive your points after approval!"
     )
 
 
@@ -219,18 +219,18 @@ def review_proofs(update: Update, context: CallbackContext):
     )
     rows = cur.fetchall()
     if not rows:
-        update.message.reply_text("No pending proofs.")
+        update.message.reply_text("📭 No pending proofs to review at the moment.")
         return
     for uid, tid, fid in rows:
         context.bot.send_photo(
             update.effective_chat.id,
             fid,
-            caption=f"<b>Proof for Task #{tid}</b>\nUser: <code>{uid}</code>",
+            caption=f"<b>Proof for 📝 Task #{tid}</b>\nUser: <code>{uid}</code>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("Approve", callback_data=f"approve_{uid}_{tid}"),
-                    InlineKeyboardButton("Reject", callback_data=f"reject_{uid}_{tid}")
+                    InlineKeyboardButton("✅ Approve", callback_data=f"approve_{uid}_{tid}"),
+                    InlineKeyboardButton("❌ Reject", callback_data=f"reject_{uid}_{tid}")
                 ]
             ])
         )
@@ -253,7 +253,7 @@ def button_handler(update: Update, context: CallbackContext):
         tid = int(data.split("_")[1])
         cur.execute("DELETE FROM tasks WHERE id = ?", (tid,))
         conn.commit()
-        q.edit_message_text(f"Task #{tid} removed.")
+        q.edit_message_text(f"📝 Task #{tid} has been removed 🗑️")
 
     elif data.startswith("approve_"):
         _, uid, tid = data.split("_")
@@ -265,12 +265,12 @@ def button_handler(update: Update, context: CallbackContext):
             (pts, uid, tid)
         )
         conn.commit()
-        q.edit_message_caption(caption=f"<b>APPROVED</b> +{pts} pts", parse_mode="HTML")
+        q.edit_message_caption(caption=f"<b>🎉 APPROVED</b> +{pts} pts", parse_mode="HTML")
         try:
             context.bot.send_message(
                 uid,
-                f"Your proof for Task #{tid} was <b>APPROVED</b>!\n"
-                f"You earned <b>{pts} points</b>!",
+                f"Your proof for 📝 Task #{tid} was <b>🎉 APPROVED</b>!\n"
+                f"🎁 You’ve earned <b>{pts} points</b>!",
                 parse_mode="HTML"
             )
         except:
@@ -281,12 +281,12 @@ def button_handler(update: Update, context: CallbackContext):
         uid, tid = int(uid), int(tid)
         cur.execute("DELETE FROM user_progress WHERE user_id = ? AND task_id = ?", (uid, tid))
         conn.commit()
-        q.edit_message_caption("Rejected.")
+        q.edit_message_caption("❌ ❌ Rejected.")
         try:
             context.bot.send_message(
                 uid,
-                f"Your proof for Task #{tid} was <b>rejected</b>.\n"
-                "Try again with a clearer screenshot!",
+                f"Your proof for 📝 Task #{tid} has been <b>REJECTED</b>. ❌\n"
+                "Please try again with a clearer screenshot 📷✨",
                 parse_mode="HTML"
             )
         except:
@@ -301,14 +301,14 @@ def process_completion(update, context, task_id, from_button=False):
     )
     row = cur.fetchone()
     if row and row[0] == 1:
-        msg = "You already completed this task!"
+        msg = "⚡ You’ve already completed this task!"
     else:
         cur.execute(
             "INSERT OR REPLACE INTO user_progress (user_id, task_id, completed) VALUES (?, ?, 0)",
             (user.id, task_id),
         )
         conn.commit()
-        msg = f"Task #{task_id} marked as in progress!\nPlease submit proof to earn points."
+        msg = f"📝 Task #{task_id} 📂 marked as <b>in progress</b>!\n📸 Don’t forget to submit your proof to claim your points!"
     if from_button:
         update.callback_query.edit_message_text(msg)
     else:
@@ -322,9 +322,9 @@ def my_stats(update: Update, context: CallbackContext):
     )
     pts = cur.fetchone()[0] or 0
     update.message.reply_text(
-        f"<b>Your Stats</b>\n\n"
-        f"Total Points: <b>{pts}</b>\n"
-        f"Keep earning!",
+        f"<b>📊 <b>Your Progress Summary</b></b>\n\n"
+        f"🏅 Total Points: <b>{pts}</b>\n"
+        f"Keep up the great work! 💪",
         parse_mode="HTML"
     )
 
@@ -335,9 +335,9 @@ def leaderboard(update: Update, context: CallbackContext):
     )
     rows = cur.fetchall()
     if not rows:
-        update.message.reply_text("No one has earned points yet.\nBe the first!")
+        update.message.reply_text("🏁 No one has earned any points yet.\nBe the first to make it to the leaderboard! 🚀")
         return
-    text = "<b>TOP 10 LEADERBOARD</b>\n\n"
+    text = "<b>🏆 <b>TOP 10 LEADERBOARD</b></b>\n\n"
     for i, (username, pts) in enumerate(rows, 1):
         medal = ["1st", "2nd", "3rd"][i-1] if i <= 3 else f"{i}th"
         text += f"{medal} @{username or 'User'} — <b>{pts} pts</b>\n"
@@ -346,7 +346,7 @@ def leaderboard(update: Update, context: CallbackContext):
 
 def complete_task(update: Update, context: CallbackContext):
     if not context.args:
-        update.message.reply_text("Usage: /complete_task [task_id]")
+        update.message.reply_text("📘 Usage: <code>/complete_task [task_id]</code>")
         return
     process_completion(update, context, int(context.args[0]), False)
 
@@ -358,7 +358,7 @@ flask_app = Flask(__name__)
 
 @flask_app.route("/")
 def home():
-    return "Bot is running!"
+    return "💼 Crypto Growth Bot is running smoothly on Render ⚙️"
 
 @flask_app.route("/webhook", methods=["POST"])
 def webhook():
