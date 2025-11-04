@@ -28,7 +28,7 @@ logger = logging.getLogger("GrowTogether")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN not found!")
+    raise ValueError("BOT_TOKEN not found! Set it in Render → Environment")
 
 ADMIN_IDS = {5002083764, 1835452655, 5838038047, 2112909022}
 
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS user_progress (
 conn.commit()
 
 # -------------------------------------------------
-# HANDLERS
+# HANDLERS (unchanged)
 # -------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
@@ -224,27 +224,11 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML")
 
 # -------------------------------------------------
-# FLASK + WEBHOOK
-# -------------------------------------------------
-flask_app = Flask(__name__)
-
-@flask_app.route("/")
-def home():
-    return "Bot is running!"
-
-@flask_app.route("/webhook", methods=["POST"])
-def webhook():
-    if request.headers.get("content-type") != "application/json":
-        abort(400)
-    update = Update.de_json(request.get_json(), application.bot)
-    asyncio.create_task(application.process_update(update))
-    return "", 200
-
-# -------------------------------------------------
-# APPLICATION (NO UPDATER!)
+# APPLICATION (v20+ – NO UPDATER!)
 # -------------------------------------------------
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 
+# Register all handlers (exactly the same as before)
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("add_task", add_task))
 application.add_handler(CommandHandler("remove_task", remove_task))
@@ -257,30 +241,39 @@ application.add_handler(CallbackQueryHandler(button_handler))
 application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
 # -------------------------------------------------
-# STARTUP
+# WEBHOOK SETUP (Render gives us the URL)
 # -------------------------------------------------
 async def set_webhook():
-    url = os.getenv("RENDER_EXTERNAL_URL")
-    if not url:
-        logger.error("RENDER_EXTERNAL_URL missing!")
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
+    if not webhook_url:
+        logger.error("RENDER_EXTERNAL_URL not set – webhook will NOT be configured!")
         return
-    webhook_url = f"{url.rstrip('/')}/webhook"
+    webhook_url = f"{webhook_url.rstrip('/')}/webhook"
     await application.bot.set_webhook(url=webhook_url)
-    logger.info(f"Webhook: {webhook_url}")
+    logger.info(f"Webhook set to {webhook_url}")
 
+# -------------------------------------------------
+# MAIN – start keep-alive + webhook server
+# -------------------------------------------------
 async def main():
-    keep_alive()
+    keep_alive()                                   # prevents Render free-tier sleep
     await application.initialize()
     await application.start()
     await set_webhook()
-    logger.info("Bot is LIVE!")
+
+    # Run the webhook server (uses the same port Render gives us)
+    port = int(os.getenv("PORT", 10000))
+    await application.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path="/webhook",
+        webhook_url=f"{os.getenv('RENDER_EXTERNAL_URL','').rstrip('/')}/webhook"
+    )
 
 # -------------------------------------------------
-# RUN
+# ENTRYPOINT
 # -------------------------------------------------
 if __name__ == "__main__":
     import nest_asyncio
     nest_asyncio.apply()
     asyncio.run(main())
-    port = int(os.getenv("PORT", 10000))
-    flask_app.run(host="0.0.0.0", port=port)
