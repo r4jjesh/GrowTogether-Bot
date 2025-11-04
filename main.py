@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS user_progress (
 conn.commit()
 
 # -------------------------------------------------
-# TELEGRAM HANDLERS (your original logic – tiny clean-ups)
+# TELEGRAM HANDLERS
 # -------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
@@ -83,7 +83,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
-# ---- add_task -------------------------------------------------
 async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
@@ -125,7 +124,6 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         disable_web_page_preview=True,
     )
 
-# ---- remove_task ----------------------------------------------
 async def remove_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
@@ -146,7 +144,6 @@ async def remove_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     await update.message.reply_text(f"Task #{task_id} removed successfully.")
 
-# ---- list_tasks ------------------------------------------------
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     niche = context.args[0] if context.args else "crypto"
     cur.execute("SELECT id, platform, name, points, url FROM tasks WHERE niche = ?", (niche,))
@@ -177,7 +174,7 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
 
-# ---- proof handling --------------------------------------------
+# Proof system
 proof_waiting = {}
 
 async def ask_proof(update: Update, context: ContextTypes.DEFAULT_TYPE, task_id: int):
@@ -200,7 +197,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     await update.message.reply_text("Proof submitted! Awaiting admin review.")
 
-# ---- review_proofs ---------------------------------------------
 async def review_proofs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("Only admins can review proofs.")
@@ -230,7 +226,6 @@ async def review_proofs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=markup
         )
 
-# ---- button_handler --------------------------------------------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -275,7 +270,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         await query.edit_message_caption("Rejected proof.")
 
-# ---- process_completion ----------------------------------------
 async def process_completion(update, context, task_id, from_button=False):
     user = update.effective_user
     cur.execute("SELECT points FROM tasks WHERE id = ?", (task_id,))
@@ -300,7 +294,6 @@ async def process_completion(update, context, task_id, from_button=False):
     else:
         await update.message.reply_text(msg)
 
-# ---- my_stats & leaderboard ------------------------------------
 async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.execute("SELECT SUM(points) FROM user_progress WHERE user_id = ?", (update.effective_user.id,))
     total = cur.fetchone()[0] or 0
@@ -325,31 +318,31 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 # -------------------------------------------------
-# FLASK + PTB WEBHOOK SETUP
+# FLASK APP
 # -------------------------------------------------
 flask_app = Flask(__name__)
 
-# Simple health-check route (also used by keep-alive pinger)
 @flask_app.route("/")
 def home():
     return "GrowTogether Bot is alive and running!"
 
-# Telegram webhook endpoint
 @flask_app.route("/webhook", methods=["POST"])
 def webhook():
     if request.headers.get("content-type") != "application/json":
         abort(400)
     json_data = request.get_json()
     update = Update.de_json(json_data, application.bot)
-    asyncio.run(application.process_update(update))
+    # Run in background
+    import asyncio
+    loop = asyncio.get_event_loop()
+    loop.create_task(application.process_update(update))
     return "", 200
 
 # -------------------------------------------------
-# MAIN – start PTB + Flask
+# PTB APPLICATION
 # -------------------------------------------------
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# Register all handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("add_task", add_task))
 application.add_handler(CommandHandler("remove_task", remove_task))
@@ -357,31 +350,41 @@ application.add_handler(CommandHandler("list_tasks", list_tasks))
 application.add_handler(CommandHandler("my_stats", my_stats))
 application.add_handler(CommandHandler("leaderboard", leaderboard))
 application.add_handler(CommandHandler("review_proofs", review_proofs))
-application.add_handler(CommandHandler("complete_task", lambda u, c: process_completion(u, c, int(c.args[0]) if c.args else None)))
+application.add_handler(CommandHandler("complete_task", lambda u, c: process_completion(u, c, int(c.args[0]) if c.args else None, from_button=False)))
 application.add_handler(CallbackQueryHandler(button_handler))
 application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
+# -------------------------------------------------
+# STARTUP
+# -------------------------------------------------
+async def set_webhook():
+    url = os.getenv("RENDER_EXTERNAL_URL")
+    if not url:
+        logger.error("RENDER_EXTERNAL_URL not set!")
+        return
+    webhook_url = f"{url.rstrip('/')}/webhook"
+    await application.bot.set_webhook(url=webhook_url)
+    logger.info(f"Webhook set to {webhook_url}")
+
+async def startup():
+    keep_alive()
+    await application.initialize()
+    await application.start()
+    await set_webhook()
+    logger.info("Bot initialized and webhook active!")
+
+# -------------------------------------------------
+# RUN
+# -------------------------------------------------
 if __name__ == "__main__":
     import nest_asyncio
     nest_asyncio.apply()
 
-    # 1. Start background keep-alive pinger
-    keep_alive()
+    # Run startup
+    import asyncio
+    asyncio.run(startup())
 
-    # 2. Build webhook URL
-    render_url = os.getenv("RENDER_EXTERNAL_URL")
-    if not render_url:
-        raise RuntimeError("Set RENDER_EXTERNAL_URL in Render dashboard (e.g. https://your-service.onrender.com)")
-
-    webhook_url = f"{render_url.rstrip('/')}/webhook"
-    logger.info(f"Setting webhook → {webhook_url}")
-
-    # 3. Set Telegram webhook (sync call – fine at startup)
-    import telegram
-    bot = telegram.Bot(token=BOT_TOKEN)
-    bot.set_webhook(url=webhook_url)
-
-    # 4. Run Flask (Render will provide PORT)
+    # Start Flask
     port = int(os.getenv("PORT", 10000))
-    logger.info(f"Starting Flask on 0.0.0.0:{port}")
+    logger.info(f"Starting Flask server on 0.0.0.0:{port}")
     flask_app.run(host="0.0.0.0", port=port)
