@@ -1,5 +1,5 @@
 # -------------------------------------------------
-# IMPORTS (everything you need)
+# IMPORTS (FIX imghdr + all others)
 # -------------------------------------------------
 import os
 import logging
@@ -8,6 +8,18 @@ import asyncio
 import threading
 from queue import Queue
 from html import escape
+
+# === FIX: imghdr missing on Render ===
+try:
+    import imghdr
+except ImportError:
+    # Create a fake imghdr module
+    import types
+    imghdr = types.ModuleType("imghdr")
+    imghdr.what = lambda *args, **kwargs: None
+    import sys
+    sys.modules["imghdr"] = imghdr
+# ======================================
 
 from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -182,12 +194,8 @@ def review_proofs(update: Update, context: CallbackContext):
             reply_markup=InlineKeyboardMarkup(
                 [
                     [
-                        InlineKeyboardButton(
-                            "Approve", callback_data=f"approve_{uid}_{tid}"
-                        ),
-                        InlineKeyboardButton(
-                            "Reject", callback_data=f"reject_{uid}_{tid}"
-                        ),
+                        InlineKeyboardButton("Approve", callback_data=f"approve_{uid}_{tid}"),
+                        InlineKeyboardButton("Reject", callback_data=f"reject_{uid}_{tid}"),
                     ]
                 ]
             ),
