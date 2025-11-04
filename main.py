@@ -1,5 +1,5 @@
 # -------------------------------------------------
-# IMPORTS (FULL FIX: urllib3 + imghdr)
+# IMPORTS (FULLY FIXED + ALL DEPENDENCIES)
 # -------------------------------------------------
 import os
 import logging
@@ -9,7 +9,7 @@ import threading
 from queue import Queue
 from html import escape
 
-# === FULL FIX: urllib3.contrib.appengine (mock missing attrs) ===
+# === FIX: urllib3.contrib.appengine ===
 try:
     import urllib3.contrib.appengine
 except ImportError:
@@ -17,12 +17,11 @@ except ImportError:
     import sys
     appengine = types.ModuleType("urllib3.contrib.appengine")
     appengine.AppEngineManager = None
-    appengine.is_appengine_sandbox = lambda: False  # ← THIS WAS MISSING
+    appengine.is_appengine_sandbox = lambda: False
     appengine.is_local_dev = lambda: False
     sys.modules["urllib3.contrib.appengine"] = appengine
-# ======================================
 
-# === FIX: imghdr missing on Render ===
+# === FIX: imghdr ===
 try:
     import imghdr
 except ImportError:
@@ -31,7 +30,6 @@ except ImportError:
     imghdr.what = lambda *args, **kwargs: None
     import sys
     sys.modules["imghdr"] = imghdr
-# ======================================
 
 from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -92,19 +90,21 @@ CREATE TABLE IF NOT EXISTS user_progress (
 conn.commit()
 
 # -------------------------------------------------
-# HANDLERS (unchanged)
+# HANDLERS (ALL YOUR ORIGINAL + BEAUTIFUL UI)
 # -------------------------------------------------
 def start(update: Update, context: CallbackContext):
     text = (
-        "<b>Welcome to Crypto Growth Bot!</b>\n\n"
-        "Complete crypto-related tasks, earn points, and climb the leaderboard!\n\n"
+        "Welcome to <b>Crypto Growth Bot</b>!\n\n"
+        "Complete tasks, earn points, and climb the leaderboard!\n\n"
         "<b>Commands:</b>\n"
-        "/list_tasks — View tasks\n"
-        "/leaderboard — See top users\n"
-        "/my_stats — Check your points\n"
-        "/complete_task [task_id] — Mark a task as complete"
+        "📋 /list_tasks — View all tasks\n"
+        "🏆 /leaderboard — See top earners\n"
+        "💰 /my_stats — Check your points\n"
+        "✅ /complete_task [id] — Submit a task\n\n"
+        "Let’s grow together!"
     )
     update.message.reply_text(text, parse_mode="HTML")
+
 
 def add_task(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
@@ -112,7 +112,9 @@ def add_task(update: Update, context: CallbackContext):
         return
     if len(context.args) < 5:
         update.message.reply_text(
-            "<code>/add_task [niche] [platform] [name] [url] [points]</code>",
+            "<code>/add_task [niche] [platform] [name] [url] [points]</code>\n"
+            "Example:\n"
+            "<code>/add_task crypto twitter Follow @elonmusk https://x.com/elonmusk 50</code>",
             parse_mode="HTML"
         )
         return
@@ -126,6 +128,7 @@ def add_task(update: Update, context: CallbackContext):
     conn.commit()
     update.message.reply_text(f"Task #{cur.lastrowid} added!")
 
+
 def remove_task(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
         update.message.reply_text("Only admins can remove tasks.")
@@ -138,35 +141,57 @@ def remove_task(update: Update, context: CallbackContext):
     conn.commit()
     update.message.reply_text(f"Task #{task_id} removed.")
 
+
 def list_tasks(update: Update, context: CallbackContext):
-    niche = context.args[0] if context.args else "crypto"
+    niche = context.args[0].lower() if context.args else "crypto"
     cur.execute(
         "SELECT id, platform, name, points, url FROM tasks WHERE niche = ?", (niche,)
     )
     rows = cur.fetchall()
     if not rows:
-        update.message.reply_text(f"No tasks in {niche}")
+        update.message.reply_text(f"No tasks in <b>{niche}</b> niche yet.", parse_mode="HTML")
         return
+
     for tid, plat, name, pts, url in rows:
+        platform_emoji = {
+            "twitter": "Twitter", "x": "X", "instagram": "Instagram", "youtube": "YouTube",
+            "tiktok": "TikTok", "discord": "Discord", "telegram": "Telegram", "website": "Website"
+        }.get(plat.lower(), "Link")
+
+        task_text = (
+            f"<b>Task #{tid}</b> {platform_emoji}\n"
+            f"<i>{plat.title()}</i>: {escape(name)}\n"
+            f"Reward: <b>{pts} pts</b>\n"
+        )
+
         btns = [
-            [InlineKeyboardButton(f"Complete #{tid}", callback_data=f"complete_{tid}")],
-            [InlineKeyboardButton("Submit Proof", callback_data=f"proof_{tid}")],
+            [InlineKeyboardButton("Complete", callback_data=f"complete_{tid}")],
+            [InlineKeyboardButton("Submit Proof", callback_data=f"proof_{tid}")]
         ]
         if url:
-            btns.append([InlineKeyboardButton("Open", url=url)])
+            btns.append([InlineKeyboardButton("Open Link", url=url)])
         if update.effective_user.id in ADMIN_IDS:
             btns.append([InlineKeyboardButton("Remove", callback_data=f"remove_{tid}")])
+
         update.message.reply_text(
-            f"<b>Task #{tid}</b>\n{plat}: {escape(name)}\nPoints: {pts}",
+            task_text,
             reply_markup=InlineKeyboardMarkup(btns),
             parse_mode="HTML",
+            disable_web_page_preview=True
         )
+
 
 proof_waiting = {}
 
+
 def ask_proof(update: Update, context: CallbackContext, task_id: int):
     proof_waiting[update.effective_user.id] = task_id
-    update.callback_query.message.reply_text(f"Send proof for Task #{task_id}")
+    update.callback_query.message.reply_text(
+        f"Send a <b>screenshot</b> as proof for Task #{task_id}\n\n"
+        "<i>Tip: Take a clear photo of your action!</i>",
+        parse_mode="HTML"
+    )
+
 
 def handle_photo(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -179,7 +204,12 @@ def handle_photo(update: Update, context: CallbackContext):
         (user_id, task_id, file_id),
     )
     conn.commit()
-    update.message.reply_text("Proof submitted!")
+    update.message.reply_text(
+        "Proof submitted!\n"
+        "Admins will review it soon.\n"
+        "You’ll get points once approved!"
+    )
+
 
 def review_proofs(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
@@ -189,13 +219,14 @@ def review_proofs(update: Update, context: CallbackContext):
     )
     rows = cur.fetchall()
     if not rows:
-        update.message.reply_text("No proofs.")
+        update.message.reply_text("No pending proofs.")
         return
     for uid, tid, fid in rows:
         context.bot.send_photo(
             update.effective_chat.id,
             fid,
-            caption=f"Proof for Task #{tid} from user {uid}",
+            caption=f"<b>Proof for Task #{tid}</b>\nFrom: <code>User {uid}</code>",
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(
                 [
                     [
@@ -205,6 +236,7 @@ def review_proofs(update: Update, context: CallbackContext):
                 ]
             ),
         )
+
 
 def button_handler(update: Update, context: CallbackContext):
     q = update.callback_query
@@ -229,7 +261,11 @@ def button_handler(update: Update, context: CallbackContext):
             (pts, uid, tid),
         )
         conn.commit()
-        q.edit_message_caption(caption=f"Approved! +{pts} pts")
+        q.edit_message_caption(caption=f"<b>Approved!</b> +{pts} pts", parse_mode="HTML")
+        try:
+            context.bot.send_message(uid, f"Your proof for Task #{tid} was <b>APPROVED</b>!\nYou earned <b>{pts} points</b>!", parse_mode="HTML")
+        except:
+            pass
     elif data.startswith("reject_"):
         _, uid, tid = data.split("_")
         cur.execute(
@@ -238,6 +274,11 @@ def button_handler(update: Update, context: CallbackContext):
         )
         conn.commit()
         q.edit_message_caption("Rejected.")
+        try:
+            context.bot.send_message(uid, f"Your proof for Task #{tid} was <b>rejected</b>.\nTry again with better proof!", parse_mode="HTML")
+        except:
+            pass
+
 
 def process_completion(update, context, task_id, from_button=False):
     user = update.effective_user
@@ -247,18 +288,19 @@ def process_completion(update, context, task_id, from_button=False):
     )
     row = cur.fetchone()
     if row and row[0] == 1:
-        msg = "Already completed!"
+        msg = "You already completed this task!"
     else:
         cur.execute(
             "INSERT OR REPLACE INTO user_progress (user_id, task_id, completed) VALUES (?, ?, 0)",
             (user.id, task_id),
         )
         conn.commit()
-        msg = f"Task #{task_id} in progress. Submit proof!"
+        msg = f"Task #{task_id} marked as in progress!\nPlease submit proof to earn points."
     if from_button:
         update.callback_query.edit_message_text(msg)
     else:
         update.message.reply_text(msg)
+
 
 def my_stats(update: Update, context: CallbackContext):
     cur.execute(
@@ -266,7 +308,13 @@ def my_stats(update: Update, context: CallbackContext):
         (update.effective_user.id,),
     )
     pts = cur.fetchone()[0] or 0
-    update.message.reply_text(f"Your points: {pts}")
+    update.message.reply_text(
+        f"<b>Your Stats</b>\n\n"
+        f"Total Points: <b>{pts}</b>\n"
+        f"Keep earning!",
+        parse_mode="HTML"
+    )
+
 
 def leaderboard(update: Update, context: CallbackContext):
     cur.execute(
@@ -274,18 +322,21 @@ def leaderboard(update: Update, context: CallbackContext):
     )
     rows = cur.fetchall()
     if not rows:
-        update.message.reply_text("No data.")
+        update.message.reply_text("No one has earned points yet.\nBe the first!")
         return
-    text = "<b>Leaderboard</b>\n" + "\n".join(
-        f"{i+1}. @{r[0] or 'User'} — {r[1]} pts" for i, r in enumerate(rows)
-    )
+    text = "<b>TOP 10 LEADERBOARD</b>\n\n"
+    for i, (username, pts) in enumerate(rows, 1):
+        medal = ["1st", "2nd", "3rd"][i-1] if i <= 3 else f"{i}th"
+        text += f"{medal} @{username or 'User'} — <b>{pts} pts</b>\n"
     update.message.reply_text(text, parse_mode="HTML")
+
 
 def complete_task(update: Update, context: CallbackContext):
     if not context.args:
         update.message.reply_text("Usage: /complete_task [task_id]")
         return
     process_completion(update, context, int(context.args[0]), False)
+
 
 # -------------------------------------------------
 # FLASK WEBHOOK
@@ -304,6 +355,7 @@ def webhook():
     update = Update.de_json(json_data, updater.bot)
     updater.dispatcher.process_update(update)
     return "", 200
+
 
 # -------------------------------------------------
 # MAIN
@@ -351,6 +403,7 @@ def main():
     threading.Thread(target=run_flask, daemon=True).start()
 
     updater.idle()
+
 
 # -------------------------------------------------
 # ENTRYPOINT
