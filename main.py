@@ -1,18 +1,23 @@
+# -------------------------------------------------
+# IMPORTS (everything you need)
+# -------------------------------------------------
 import os
 import logging
 import sqlite3
-from html import escape
 import asyncio
+import threading
+from queue import Queue
+from html import escape
 
 from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder,
+    Updater,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    ContextTypes,
-    filters,
+    Filters,
+    CallbackContext,
 )
 
 from keep_alive import keep_alive
@@ -63,9 +68,9 @@ CREATE TABLE IF NOT EXISTS user_progress (
 conn.commit()
 
 # -------------------------------------------------
-# HANDLERS (unchanged)
+# HANDLERS (v13 style – sync, CallbackContext)
 # -------------------------------------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     text = (
         "<b>Welcome to Crypto Growth Bot!</b>\n\n"
         "Complete crypto-related tasks, earn points, and climb the leaderboard!\n\n"
@@ -75,14 +80,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/my_stats — Check your points\n"
         "/complete_task [task_id] — Mark a task as complete"
     )
-    await update.message.reply_text(text, parse_mode="HTML")
+    update.message.reply_text(text, parse_mode="HTML")
 
-async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+def add_task(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("Only admins can add tasks.")
+        update.message.reply_text("Only admins can add tasks.")
         return
     if len(context.args) < 5:
-        await update.message.reply_text(
+        update.message.reply_text(
             "<code>/add_task [niche] [platform] [name] [url] [points]</code>",
             parse_mode="HTML"
         )
@@ -90,52 +96,61 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     niche, platform = context.args[0], context.args[1]
     name = " ".join(context.args[2:-2])
     url, points = context.args[-2], int(context.args[-1])
-    cur.execute("INSERT INTO tasks (niche, platform, name, points, url) VALUES (?, ?, ?, ?, ?)",
-                (niche, platform, name, points, url))
+    cur.execute(
+        "INSERT INTO tasks (niche, platform, name, points, url) VALUES (?, ?, ?, ?, ?)",
+        (niche, platform, name, points, url)
+    )
     conn.commit()
-    await update.message.reply_text(f"Task #{cur.lastrowid} added!")
+    update.message.reply_text(f"Task #{cur.lastrowid} added!")
 
-async def remove_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+def remove_task(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("Only admins can remove tasks.")
+        update.message.reply_text("Only admins can remove tasks.")
         return
     if not context.args:
-        await update.message.reply_text("Usage: /remove_task [task_id]")
+        update.message.reply_text("Usage: /remove_task [task_id]")
         return
     task_id = int(context.args[0])
     cur.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     conn.commit()
-    await update.message.reply_text(f"Task #{task_id} removed.")
+    update.message.reply_text(f"Task #{task_id} removed.")
 
-async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+def list_tasks(update: Update, context: CallbackContext):
     niche = context.args[0] if context.args else "crypto"
-    cur.execute("SELECT id, platform, name, points, url FROM tasks WHERE niche = ?", (niche,))
+    cur.execute(
+        "SELECT id, platform, name, points, url FROM tasks WHERE niche = ?", (niche,)
+    )
     rows = cur.fetchall()
     if not rows:
-        await update.message.reply_text(f"No tasks in {niche}")
+        update.message.reply_text(f"No tasks in {niche}")
         return
     for tid, plat, name, pts, url in rows:
         btns = [
             [InlineKeyboardButton(f"Complete #{tid}", callback_data=f"complete_{tid}")],
-            [InlineKeyboardButton("Submit Proof", callback_data=f"proof_{tid}")]
+            [InlineKeyboardButton("Submit Proof", callback_data=f"proof_{tid}")],
         ]
         if url:
             btns.append([InlineKeyboardButton("Open", url=url)])
         if update.effective_user.id in ADMIN_IDS:
             btns.append([InlineKeyboardButton("Remove", callback_data=f"remove_{tid}")])
-        await update.message.reply_text(
+        update.message.reply_text(
             f"<b>Task #{tid}</b>\n{plat}: {escape(name)}\nPoints: {pts}",
             reply_markup=InlineKeyboardMarkup(btns),
-            parse_mode="HTML"
+            parse_mode="HTML",
         )
+
 
 proof_waiting = {}
 
-async def ask_proof(update: Update, context: ContextTypes.DEFAULT_TYPE, task_id: int):
-    proof_waiting[update.effective_user.id] = task_id
-    await update.callback_query.message.reply_text(f"Send proof for Task #{task_id}")
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def ask_proof(update: Update, context: CallbackContext, task_id: int):
+    proof_waiting[update.effective_user.id] = task_id
+    update.callback_query.message.reply_text(f"Send proof for Task #{task_id}")
+
+
+def handle_photo(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id not in proof_waiting:
         return
@@ -143,132 +158,200 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id = update.message.photo[-1].file_id
     cur.execute(
         "INSERT OR REPLACE INTO user_progress (user_id, task_id, proof, completed) VALUES (?, ?, ?, 0)",
-        (user_id, task_id, file_id)
+        (user_id, task_id, file_id),
     )
     conn.commit()
-    await update.message.reply_text("Proof submitted!")
+    update.message.reply_text("Proof submitted!")
 
-async def review_proofs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+def review_proofs(update: Update, context: CallbackContext):
     if update.effective_user.id not in ADMIN_IDS:
         return
-    cur.execute("SELECT user_id, task_id, proof FROM user_progress WHERE proof IS NOT NULL AND completed = 0")
+    cur.execute(
+        "SELECT user_id, task_id, proof FROM user_progress WHERE proof IS NOT NULL AND completed = 0"
+    )
     rows = cur.fetchall()
     if not rows:
-        await update.message.reply_text("No proofs.")
+        update.message.reply_text("No proofs.")
         return
     for uid, tid, fid in rows:
-        await context.bot.send_photo(
+        context.bot.send_photo(
             update.effective_chat.id,
             fid,
             caption=f"Proof for Task #{tid} from user {uid}",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("Approve", callback_data=f"approve_{uid}_{tid}"),
-                InlineKeyboardButton("Reject", callback_data=f"reject_{uid}_{tid}")
-            ]])
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "Approve", callback_data=f"approve_{uid}_{tid}"
+                        ),
+                        InlineKeyboardButton(
+                            "Reject", callback_data=f"reject_{uid}_{tid}"
+                        ),
+                    ]
+                ]
+            ),
         )
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+def button_handler(update: Update, context: CallbackContext):
     q = update.callback_query
-    await q.answer()
+    q.answer()
     data = q.data
     if data.startswith("complete_"):
-        await process_completion(update, context, int(data.split("_")[1]), True)
+        process_completion(update, context, int(data.split("_")[1]), True)
     elif data.startswith("proof_"):
-        await ask_proof(update, context, int(data.split("_")[1]))
+        ask_proof(update, context, int(data.split("_")[1]))
     elif data.startswith("remove_") and update.effective_user.id in ADMIN_IDS:
         tid = int(data.split("_")[1])
         cur.execute("DELETE FROM tasks WHERE id = ?", (tid,))
         conn.commit()
-        await q.edit_message_text(f"Task #{tid} removed.")
+        q.edit_message_text(f"Task #{tid} removed.")
     elif data.startswith("approve_"):
         _, uid, tid = data.split("_")
         uid, tid = int(uid), int(tid)
         cur.execute("SELECT points FROM tasks WHERE id = ?", (tid,))
         pts = cur.fetchone()[0]
-        cur.execute("UPDATE user_progress SET completed = 1, points = ? WHERE user_id = ? AND task_id = ?", (pts, uid, tid))
+        cur.execute(
+            "UPDATE user_progress SET completed = 1, points = ? WHERE user_id = ? AND task_id = ?",
+            (pts, uid, tid),
+        )
         conn.commit()
-        await q.edit_message_caption(caption=f"Approved! +{pts} pts")
+        q.edit_message_caption(caption=f"Approved! +{pts} pts")
     elif data.startswith("reject_"):
         _, uid, tid = data.split("_")
-        cur.execute("DELETE FROM user_progress WHERE user_id = ? AND task_id = ?", (int(uid), int(tid)))
+        cur.execute(
+            "DELETE FROM user_progress WHERE user_id = ? AND task_id = ?",
+            (int(uid), int(tid)),
+        )
         conn.commit()
-        await q.edit_message_caption("Rejected.")
+        q.edit_message_caption("Rejected.")
 
-async def process_completion(update, context, task_id, from_button=False):
+
+def process_completion(update, context, task_id, from_button=False):
     user = update.effective_user
-    cur.execute("SELECT completed FROM user_progress WHERE user_id = ? AND task_id = ?", (user.id, task_id))
+    cur.execute(
+        "SELECT completed FROM user_progress WHERE user_id = ? AND task_id = ?",
+        (user.id, task_id),
+    )
     row = cur.fetchone()
     if row and row[0] == 1:
         msg = "Already completed!"
     else:
-        cur.execute("INSERT OR REPLACE INTO user_progress (user_id, task_id, completed) VALUES (?, ?, 0)", (user.id, task_id))
+        cur.execute(
+            "INSERT OR REPLACE INTO user_progress (user_id, task_id, completed) VALUES (?, ?, 0)",
+            (user.id, task_id),
+        )
         conn.commit()
         msg = f"Task #{task_id} in progress. Submit proof!"
     if from_button:
-        await update.callback_query.edit_message_text(msg)
+        update.callback_query.edit_message_text(msg)
     else:
-        await update.message.reply_text(msg)
+        update.message.reply_text(msg)
 
-async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cur.execute("SELECT SUM(points) FROM user_progress WHERE user_id = ? AND completed = 1", (update.effective_user.id,))
+
+def my_stats(update: Update, context: CallbackContext):
+    cur.execute(
+        "SELECT SUM(points) FROM user_progress WHERE user_id = ? AND completed = 1",
+        (update.effective_user.id,),
+    )
     pts = cur.fetchone()[0] or 0
-    await update.message.reply_text(f"Your points: {pts}")
+    update.message.reply_text(f"Your points: {pts}")
 
-async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cur.execute("SELECT username, SUM(points) FROM user_progress WHERE completed = 1 GROUP BY user_id ORDER BY SUM(points) DESC LIMIT 10")
+
+def leaderboard(update: Update, context: CallbackContext):
+    cur.execute(
+        "SELECT username, SUM(points) FROM user_progress WHERE completed = 1 GROUP BY user_id ORDER BY SUM(points) DESC LIMIT 10"
+    )
     rows = cur.fetchall()
     if not rows:
-        await update.message.reply_text("No data.")
+        update.message.reply_text("No data.")
         return
-    text = "<b>Leaderboard</b>\n" + "\n".join(f"{i+1}. @{r[0] or 'User'} — {r[1]} pts" for i, r in enumerate(rows))
-    await update.message.reply_text(text, parse_mode="HTML")
-
-# -------------------------------------------------
-# APPLICATION (v20+ – NO UPDATER!)
-# -------------------------------------------------
-application = ApplicationBuilder().token(BOT_TOKEN).build()
-
-# Register all handlers (exactly the same as before)
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("add_task", add_task))
-application.add_handler(CommandHandler("remove_task", remove_task))
-application.add_handler(CommandHandler("list_tasks", list_tasks))
-application.add_handler(CommandHandler("my_stats", my_stats))
-application.add_handler(CommandHandler("leaderboard", leaderboard))
-application.add_handler(CommandHandler("review_proofs", review_proofs))
-application.add_handler(CommandHandler("complete_task", lambda u, c: process_completion(u, c, int(c.args[0]) if c.args else None)))
-application.add_handler(CallbackQueryHandler(button_handler))
-application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
-# -------------------------------------------------
-# WEBHOOK SETUP (Render gives us the URL)
-# -------------------------------------------------
-async def set_webhook():
-    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
-    if not webhook_url:
-        logger.error("RENDER_EXTERNAL_URL not set – webhook will NOT be configured!")
-        return
-    webhook_url = f"{webhook_url.rstrip('/')}/webhook"
-    await application.bot.set_webhook(url=webhook_url)
-    logger.info(f"Webhook set to {webhook_url}")
-
-# -------------------------------------------------
-# MAIN – start keep-alive + webhook server
-# -------------------------------------------------
-async def main():
-    keep_alive()                                   # prevents Render free-tier sleep
-    await application.initialize()
-    await application.start()
-    await set_webhook()
-
-    # Run the webhook server (uses the same port Render gives us)
-    port = int(os.getenv("PORT", 10000))
-    await application.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path="/webhook",
-        webhook_url=f"{os.getenv('RENDER_EXTERNAL_URL','').rstrip('/')}/webhook"
+    text = "<b>Leaderboard</b>\n" + "\n".join(
+        f"{i+1}. @{r[0] or 'User'} — {r[1]} pts" for i, r in enumerate(rows)
     )
+    update.message.reply_text(text, parse_mode="HTML")
+
+
+def complete_task(update: Update, context: CallbackContext):
+    if not context.args:
+        update.message.reply_text("Usage: /complete_task [task_id]")
+        return
+    process_completion(update, context, int(context.args[0]), False)
+
+
+# -------------------------------------------------
+# FLASK WEBHOOK (Render needs a route)
+# -------------------------------------------------
+flask_app = Flask(__name__)
+
+@flask_app.route("/")
+def home():
+    return "Bot is running!"
+
+@flask_app.route("/webhook", methods=["POST"])
+def webhook():
+    if request.headers.get("content-type") != "application/json":
+        abort(400)
+    json_data = request.get_json()
+    update = Update.de_json(json_data, updater.bot)
+    updater.dispatcher.process_update(update)
+    return "", 200
+
+
+# -------------------------------------------------
+# MAIN – start keep-alive + webhook
+# -------------------------------------------------
+def main():
+    global updater
+    updater = Updater(BOT_TOKEN, use_context=True)
+
+    dp = updater.dispatcher
+
+    # Register handlers
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("add_task", add_task))
+    dp.add_handler(CommandHandler("remove_task", remove_task))
+    dp.add_handler(CommandHandler("list_tasks", list_tasks))
+    dp.add_handler(CommandHandler("my_stats", my_stats))
+    dp.add_handler(CommandHandler("leaderboard", leaderboard))
+    dp.add_handler(CommandHandler("review_proofs", review_proofs))
+    dp.add_handler(CommandHandler("complete_task", complete_task))
+    dp.add_handler(CallbackQueryHandler(button_handler))
+    dp.add_handler(MessageHandler(Filters.photo, handle_photo))
+
+    # Keep-alive (prevents Render free-tier sleep)
+    keep_alive()
+
+    # Webhook URL from Render
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
+    port = int(os.getenv("PORT", 10000))
+
+    if webhook_url:
+        webhook_url = f"{webhook_url.rstrip('/')}/webhook"
+        updater.start_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path="/webhook",
+            webhook_url=webhook_url,
+        )
+        logger.info(f"Webhook set to {webhook_url}")
+    else:
+        logger.warning("RENDER_EXTERNAL_URL not set – falling back to polling")
+        updater.start_polling()
+
+    logger.info("Bot is LIVE!")
+
+    # Run Flask in a background thread (Render expects a web server)
+    def run_flask():
+        flask_app.run(host="0.0.0.0", port=port)
+
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    # Keep the main thread alive
+    updater.idle()
+
 
 # -------------------------------------------------
 # ENTRYPOINT
@@ -276,4 +359,4 @@ async def main():
 if __name__ == "__main__":
     import nest_asyncio
     nest_asyncio.apply()
-    asyncio.run(main())
+    main()
