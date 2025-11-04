@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS user_progress (
 conn.commit()
 
 # -------------------------------------------------
-# TELEGRAM HANDLERS
+# TELEGRAM HANDLERS (your original code – unchanged)
 # -------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
@@ -332,7 +332,7 @@ def webhook():
         abort(400)
     json_data = request.get_json()
     update = Update.de_json(json_data, application.bot)
-    # Run in background
+    # Run in background – safe for Flask
     import asyncio
     loop = asyncio.get_event_loop()
     loop.create_task(application.process_update(update))
@@ -355,7 +355,7 @@ application.add_handler(CallbackQueryHandler(button_handler))
 application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
 # -------------------------------------------------
-# STARTUP
+# STARTUP (no Updater!)
 # -------------------------------------------------
 async def set_webhook():
     url = os.getenv("RENDER_EXTERNAL_URL")
@@ -364,14 +364,14 @@ async def set_webhook():
         return
     webhook_url = f"{url.rstrip('/')}/webhook"
     await application.bot.set_webhook(url=webhook_url)
-    logger.info(f"Webhook set to {webhook_url}")
+    logger.info(f"Webhook set → {webhook_url}")
 
 async def startup():
     keep_alive()
     await application.initialize()
     await application.start()
     await set_webhook()
-    logger.info("Bot initialized and webhook active!")
+    logger.info("Bot is ready and webhook is active!")
 
 # -------------------------------------------------
 # RUN
@@ -384,7 +384,7 @@ if __name__ == "__main__":
     import asyncio
     asyncio.run(startup())
 
-    # Start Flask
+    # Start Flask (Render gives PORT)
     port = int(os.getenv("PORT", 10000))
-    logger.info(f"Starting Flask server on 0.0.0.0:{port}")
+    logger.info(f"Starting Flask on 0.0.0.0:{port}")
     flask_app.run(host="0.0.0.0", port=port)
